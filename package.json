@@ -1,0 +1,16 @@
+{
+  "name": "robotics-control-command-queue-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prototype: low-latency route-override command queue with explicit operator feedback and safe conflict handling for Robotics Control shift-change windows (Signal ROBO-2891).",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "demo": "node src/simulate.js",
+    "demo:legacy": "node src/simulate.js --legacy"
+  },
+  "license": "UNLICENSED"
+}
