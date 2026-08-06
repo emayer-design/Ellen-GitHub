@@ -1,0 +1,22 @@
+{
+  "name": "command-queue-visibility",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype: command queue visibility and conflict handling for Robotics Control route overrides.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "simulate": "node src/simulate.js",
+    "start": "node src/server.js"
+  },
+  "keywords": [
+    "robotics-control",
+    "command-queue",
+    "conflict-detection",
+    "prototype"
+  ],
+  "license": "UNLICENSED"
+}
