@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Command Queue — Robotics Control</title>
+    <style>
+      :root {
+        --bg: #0f1218; --panel: #171c26; --line: #262d3a; --text: #e6e9ef;
+        --muted: #8b94a7; --queued: #d9a441; --processing: #4a90d9;
+        --completed: #3fae72; --failed: #d95757; --held: #b06fd6;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      header { padding: 16px 24px; border-bottom: 1px solid var(--line);
+        display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+      h1 { font-size: 16px; margin: 0; }
+      header .sub { color: var(--muted); font-size: 13px; }
+      main { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px 24px; }
+      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+      .panel { background: var(--panel); border: 1px solid var(--line);
+        border-radius: 10px; padding: 16px; }
+      .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+        color: var(--muted); margin: 0 0 12px; }
+      .metrics { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+      .metric { background: var(--panel); border: 1px solid var(--line);
+        border-radius: 8px; padding: 8px 12px; }
+      .metric b { display: block; font-size: 18px; }
+      .metric span { color: var(--muted); font-size: 12px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line);
+        font-variant-numeric: tabular-nums; }
+      th { color: var(--muted); font-weight: 600; font-size: 12px; }
+      .state { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+        text-transform: uppercase; letter-spacing: .04em; }
+      .state.queued { background: rgba(217,164,65,.16); color: var(--queued); }
+      .state.processing { background: rgba(74,144,217,.16); color: var(--processing); }
+      .state.completed { background: rgba(63,174,114,.16); color: var(--completed); }
+      .state.failed { background: rgba(217,87,87,.16); color: var(--failed); }
+      .held { color: var(--held); font-size: 11px; font-weight: 700; margin-left: 6px; }
+      .dup { color: var(--queued); font-size: 12px; }
+      button { background: #222a38; color: var(--text); border: 1px solid var(--line);
+        border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; }
+      button:hover { border-color: #3a465c; }
+      .esc { border: 1px solid var(--held); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+      .esc h3 { margin: 0 0 6px; font-size: 13px; color: var(--held); }
+      .esc .row { display: flex; justify-content: space-between; align-items: center;
+        gap: 8px; padding: 4px 0; }
+      .muted { color: var(--muted); }
+      .controls { display: flex; gap: 8px; margin-bottom: 16px; }
+      footer { color: var(--muted); padding: 8px 24px 24px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Command Queue — Robotics Control</h1>
+      <span class="sub">Route override visibility &amp; conflict handling · live prototype</span>
+    </header>
+
+    <div class="controls" style="padding: 16px 24px 0">
+      <button id="process">Process next command</button>
+      <span class="muted" id="clock"></span>
+    </div>
+
+    <main>
+      <section class="panel">
+        <h2>Command queue (R1 · R2)</h2>
+        <div class="metrics" id="metrics"></div>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Operator</th><th>Robot</th><th>Route / dir</th><th>State</th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Supervisor console (R4 · R5)</h2>
+        <div id="escalations"><p class="muted">No conflicts. Everything nominal.</p></div>
+      </section>
+    </main>
+
+    <footer>
+      Prototype for signal “Command queue latency during shift changes”. Seeded with the
+      repro scenario (R6): 4 operators, route overrides within a 30s window.
+    </footer>
+
+    <script>
+      const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+      async function api(path, opts) {
+        const res = await fetch(path, opts);
+        return res.json();
+      }
+
+      function metric(label, value) {
+        return `<div class="metric"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+      }
+
+      function render(state) {
+        const m = state.metrics;
+        document.getElementById("metrics").innerHTML = [
+          metric("queue depth", state.queueDepth),
+          metric("submitted", m.submitted),
+          metric("duplicates suppressed", m.duplicatesSuppressed),
+          metric("conflicts detected", m.conflictsDetected),
+        ].join("");
+
+        document.getElementById("rows").innerHTML = state.commands.map((c) => {
+          const held = c.blocked ? `<span class="held">HELD</span>` : "";
+          const dup = c.suppressedResubmits
+            ? `<span class="dup"> +${c.suppressedResubmits} dup</span>` : "";
+          const reason = c.failureReason ? `<div class="muted">${esc(c.failureReason)}</div>` : "";
+          return `<tr>
+            <td>${esc(c.id)}${dup}</td>
+            <td>${esc(c.operatorId)}</td>
+            <td>${esc(c.robotId)}</td>
+            <td>${esc(c.targetRoute)} / ${esc(c.direction)}</td>
+            <td><span class="state ${esc(c.state)}">${esc(c.state)}</span>${held}${reason}</td>
+          </tr>`;
+        }).join("");
+
+        const box = document.getElementById("escalations");
+        if (!state.escalations.length) {
+          box.innerHTML = `<p class="muted">No conflicts. Everything nominal.</p>`;
+        } else {
+          box.innerHTML = state.escalations.map((e) => `
+            <div class="esc">
+              <h3>${esc(e.robotId)} · priority ${esc(e.priority)}</h3>
+              <div class="muted">Operators: ${esc(e.operators.join(", "))}</div>
+              ${e.commands.map((c) => `
+                <div class="row">
+                  <span>${esc(c.id)} — ${esc(c.operatorId)} → ${esc(c.targetRoute)} / ${esc(c.direction)}</span>
+                  <button data-conflict="${esc(e.conflictId)}" data-winner="${esc(c.id)}">Pick winner</button>
+                </div>`).join("")}
+            </div>`).join("");
+          box.querySelectorAll("button[data-conflict]").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+              await api("/api/resolve", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  conflictId: btn.dataset.conflict,
+                  winnerCommandId: btn.dataset.winner,
+                }),
+              });
+              refresh();
+            });
+          });
+        }
+      }
+
+      async function refresh() {
+        render(await api("/api/state"));
+      }
+
+      document.getElementById("process").addEventListener("click", async () => {
+        await api("/api/process", { method: "POST" });
+        refresh();
+      });
+
+      refresh();
+      setInterval(refresh, 1500);
+    </script>
+  </body>
+</html>
